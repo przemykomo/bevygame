@@ -17,5 +17,6 @@ opt-level = 3
 bevy = { version = "0.12", features = ["dynamic_linking"] }
 #bevy-inspector-egui = "0.22.1"
 #bevy_ecs_ldtk = { git = "https://github.com/Trouv/bevy_ecs_ldtk.git" }
-bevy_ecs_ldtk = "0.9.0"
+#bevy_ecs_ldtk = "0.9.0"
+bevy_ecs_ldtk = { path = "../bevy_ecs_ldtk" }
 bevy_rapier2d = "0.24.0"

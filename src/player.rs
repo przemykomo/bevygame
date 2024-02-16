@@ -28,13 +28,15 @@ pub struct JumpComponent {
 #[derive(Default, Bundle, LdtkEntity)]
 pub struct PlayerBundle {
     player: Player,
-    #[sprite_sheet_bundle]
-    sprite_sheet_bundle: SpriteSheetBundle,
-    #[grid_coords]
-    grid_coords: GridCoords,
+    #[sprite_bundle("player.png")]
+    sprite_bundle: SpriteBundle,
+    //#[grid_coords]
+    //grid_coords: GridCoords,
     #[from_entity_instance]
     collider_bundle: ColliderBundle,
-    jump_component: JumpComponent
+    jump_component: JumpComponent,
+    #[worldly]
+    worldy: Worldly
 }
 
 #[derive(Component)]
@@ -63,7 +65,7 @@ pub struct GrapppleBundle {
 impl From<&EntityInstance> for ColliderBundle {
     fn from(_value: &EntityInstance) -> Self {
         ColliderBundle {
-            collider: Collider::cuboid(6.0, 14.0),
+            collider: Collider::cuboid(8.0, 8.0),
             rigid_body: RigidBody::Dynamic,
             friction: Friction {
                 coefficient: 0.0,
@@ -157,7 +159,7 @@ pub fn grapple(
                                 anchor: bevy::sprite::Anchor::CenterLeft,
                                 ..default()
                             },
-                            transform: Transform::from_translation(Vec3::new(hit_point.x, hit_point.y, 2.0)),
+                            transform: Transform::from_translation(Vec3::new(hit_point.x, hit_point.y, 10.0)),
                             ..default()
                         },
                         rigid_body: RigidBody::Dynamic,
