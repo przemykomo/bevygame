@@ -1,6 +1,8 @@
 use bevy::{prelude::*, utils::HashSet, window::PrimaryWindow};
 use bevy_ecs_ldtk::prelude::*;
-use bevy_rapier2d::{prelude::*, dynamics::RopeJointBuilder};
+use bevy_rapier2d::{dynamics::RopeJointBuilder, prelude::*};
+
+use crate::{Hook, Spikes};
 
 const JUMP_GRACE_PERIOD : f32 = 0.1;
 
@@ -13,6 +15,7 @@ pub struct ColliderBundle {
     pub gravity_scale: GravityScale,
     pub friction: Friction,
     pub density: ColliderMassProperties,
+    pub active_events: ActiveEvents
 }
 
 #[derive(Clone, Default, Component)]
@@ -37,6 +40,27 @@ pub struct PlayerBundle {
     jump_component: JumpComponent,
     #[worldly]
     worldy: Worldly
+}
+
+#[derive(Component, Default, Debug)]
+pub struct Spawnpoint {
+    pos: Vec2
+}
+
+#[derive(Default, Bundle, LdtkEntity)]
+pub struct SpawnpointBundle {
+    #[from_entity_instance]
+    spawnpoint: Spawnpoint,
+    #[sprite_bundle("player.png")]
+    sprite_bundle: SpriteBundle
+}
+
+impl From<&EntityInstance> for Spawnpoint {
+    fn from(value: &EntityInstance) -> Self {
+        Spawnpoint {
+            pos: Vec2::new(value.world_x.unwrap() as f32, value.world_y.unwrap() as f32)
+        }
+    }
 }
 
 #[derive(Component)]
@@ -65,6 +89,7 @@ pub struct GrapppleBundle {
 impl From<&EntityInstance> for ColliderBundle {
     fn from(_value: &EntityInstance) -> Self {
         ColliderBundle {
+            //collider: Collider::round_cuboid(3.5, 3.5, 0.05),
             collider: Collider::cuboid(8.0, 8.0),
             rigid_body: RigidBody::Dynamic,
             friction: Friction {
@@ -72,15 +97,61 @@ impl From<&EntityInstance> for ColliderBundle {
                 combine_rule: CoefficientCombineRule::Min
             },
             rotation_constraints: LockedAxes::ROTATION_LOCKED,
-            ..Default::default()
+            active_events: ActiveEvents::COLLISION_EVENTS,
+            ..default()
         }
     }
 }
 
-pub fn movement(input: Res<Input<KeyCode>>, mut query: Query<(&mut Velocity, &mut JumpComponent, &mut GravityScale), With<Player>>, time: Res<Time>) {
+pub fn collide_with_spikes(
+    mut event: EventReader<CollisionEvent>,
+    level_selection: Res<LevelSelection>,
+    levels: Query<(&LevelIid, &Children)>,
+    spikes: Query<&Spikes>,
+    mut player: Query<&mut Transform, With<Player>>,
+    ldtk_projects: Query<&Handle<LdtkProject>>,
+    ldtk_project_assets: Res<Assets<LdtkProject>>,
+    spawnpoint: Query<&GlobalTransform, With<Spawnpoint>>,
+    entity_layer: Query<&Children, With<LayerMetadata>>
+) {
+    for event in event.read() {
+        if let CollisionEvent::Started(entity, entity_2, _flags) = event {
+            if (spikes.contains(*entity) && player.contains(*entity_2)) || (spikes.contains(*entity_2) && player.contains(*entity)) {
+                if let Some(only_project) = ldtk_project_assets.get(ldtk_projects.single()) {
+                    let level_selection_iid = LevelIid::new(
+                        only_project
+                            .find_raw_level_by_level_selection(&level_selection)
+                            .expect("spawned level should exist in project")
+                            .iid
+                            .clone(),
+                    );
+
+                    for (level_iid, children) in levels.iter() {
+                        if level_selection_iid == *level_iid {
+                            for &child in children.iter() {
+                                if let Ok(children) = entity_layer.get(child) {
+                                    for &child in children.iter() {
+                                        if let Ok(spawnpoint) = spawnpoint.get(child) {
+                                        let mut player_transform = player.single_mut();
+                                            player_transform.translation.x = spawnpoint.translation().x;
+                                            player_transform.translation.y = spawnpoint.translation().y;
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn movement(input: Res<ButtonInput<KeyCode>>, mut query: Query<(&mut Velocity, &mut JumpComponent, &mut GravityScale), With<Player>>, time: Res<Time>) {
     for (mut velocity, mut jump_component, mut gravity_scale) in &mut query {
-        let right = if input.pressed(KeyCode::D) { 1.0 } else { 0.0 };
-        let left = if input.pressed(KeyCode::A) { 1.0 } else { 0.0 };
+        let right = if input.pressed(KeyCode::KeyD) { 1.0 } else { 0.0 };
+        let left = if input.pressed(KeyCode::KeyA) { 1.0 } else { 0.0 };
 
         let target_speed : f32 = (right - left) * 90.0;
         let speed_difference : f32 = target_speed - velocity.linvel.x;
@@ -131,10 +202,11 @@ pub fn grapple(
     mut commands: Commands,
     mut player: Query<(Entity, &Transform, &mut Velocity), With<Player>>,
     grapple: Query<Entity, With<Grapple>>,
-    input: Res<Input<MouseButton>>,
+    input: Res<ButtonInput<MouseButton>>,
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform)>,
-    rapier_context: Res<RapierContext>
+    rapier_context: Res<RapierContext>,
+    hook: Query<&GlobalTransform, With<Hook>>
 ) {
     if input.just_pressed(MouseButton::Left) {
 
@@ -142,10 +214,17 @@ pub fn grapple(
         let (camera, camera_transform) = camera.single();
         let window = window.single();
         if let Some(cursor_pos) = window.cursor_position() {
-            if let Some(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) {
-                let ray_dir = (world_pos - player_transform.translation.xy()).normalize();
-                if let Some((_, toi)) = rapier_context.cast_ray(player_transform.translation.xy(), ray_dir, 80.0, true, QueryFilter::only_fixed()) {
-                    let hit_point = player_transform.translation.xy() + ray_dir * toi;
+            if let Some(world_pos_cursor) = camera.viewport_to_world_2d(camera_transform, cursor_pos) {
+                
+                let hit_point = hook.iter().min_by_key(|h| {
+                    //println!("{}", h.translation());
+                    h.translation().xy().distance_squared(world_pos_cursor) as i32
+                }).expect("There should be a hook!").translation().xy();
+                //println!("{world_pos}, {world_pos_cursor}");
+
+                //let ray_dir = (world_pos - player_transform.translation.xy()).normalize();
+                //if let Some((_, toi)) = rapier_context.cast_ray(player_transform.translation.xy(), ray_dir, 80.0, true, QueryFilter::only_fixed()) {
+                    //let hit_point = player_transform.translation.xy() + ray_dir * toi;
 
                     let joint = RopeJointBuilder::new(80.0)
                         .local_anchor1(Vec2::new(0.0, 0.0))
@@ -166,7 +245,7 @@ pub fn grapple(
                         gravity_scale: GravityScale(0.0),
                         ..default()
                     }).insert(ImpulseJoint::new(player_entity, joint));
-                }
+                //}
             }
         }
     }
@@ -199,11 +278,17 @@ pub fn grapple_look_at_player(
 
 pub fn grapple_pull_player(
     mut player: Query<(&Transform, &mut Velocity), With<Player>>,
-    grapple: Query<&Transform, With<Grapple>>
+    mut grapple: Query<(&Transform, &mut ImpulseJoint), With<Grapple>>
 ) {
     if let Ok((transform, mut velocity)) = player.get_single_mut() {
-        if let Ok(grapple_transform) = grapple.get_single() {
-            velocity.linvel += (grapple_transform.translation - transform.translation).xy() / 10.0;
+        if let Ok((grapple_transform, mut joint)) = grapple.get_single_mut() {
+            let mut difference = (grapple_transform.translation - transform.translation).xy();
+            difference.y /= 4.0;
+            difference.x /= 2.0;
+            velocity.linvel += difference;
+            if let Some(rope_joint) = joint.data.as_rope_mut() {
+                rope_joint.set_max_distance(rope_joint.max_distance().min(transform.translation.xy().distance(grapple_transform.translation.xy())));
+            }
         }
     }
 }
@@ -243,7 +328,7 @@ pub fn spawn_ground_sensor(
 pub fn ground_detection(
     mut ground_sensors: Query<&mut GroundSensor>,
     mut collisions: EventReader<CollisionEvent>,
-    collidables: Query<With<Collider>, Without<Sensor>>,
+    collidables: Query<(), (With<Collider>, Without<Sensor>)>,
 ) {
     for collision_event in collisions.read() {
         match collision_event {

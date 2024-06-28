@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bevy::{prelude::*, render::camera::ScalingMode, utils::HashSet};
+use bevy::{prelude::*, utils::HashSet};
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
@@ -10,6 +10,14 @@ pub struct Wall;
 #[derive(Default, Bundle, LdtkIntCell)]
 pub struct WallBundle {
     wall: Wall
+}
+
+#[derive(Default, Component, Copy, Clone)]
+pub struct Spikes;
+
+#[derive(Default, Bundle, LdtkIntCell)]
+pub struct SpikesBundle {
+    spikes: Spikes
 }
 
 #[derive(Default, Component)]
@@ -55,11 +63,60 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 pub fn spawn_wall_collision(
     mut commands: Commands,
     wall_query: Query<(&GridCoords, &Parent), Added<Wall>>,
+    spikes_query: Query<(&GridCoords, &Parent), Added<Spikes>>,
     parent_query: Query<&Parent, Without<Wall>>,
     level_query: Query<(Entity, &LevelIid)>,
     ldtk_projects: Query<&Handle<LdtkProject>>,
     ldtk_project_assets: Res<Assets<LdtkProject>>,
 ) {
+
+    let mut level_to_spikes_locations: HashMap<Entity, HashSet<GridCoords>> = HashMap::new();
+
+
+
+    spikes_query.for_each(|(&grid_coords, parent)| {
+        if let Ok(grandparent) = parent_query.get(parent.get()) {
+            level_to_spikes_locations
+                .entry(grandparent.get())
+                .or_default()
+                .insert(grid_coords);
+        }
+    });
+    
+    spawn_collisions_internal(&mut commands, wall_query, &parent_query, &level_query, &ldtk_projects, &ldtk_project_assets, ());
+    spawn_collisions_internal(&mut commands, spikes_query, &parent_query, &level_query, &ldtk_projects, &ldtk_project_assets, Spikes);
+}
+
+fn spawn_collisions_internal<T: bevy::prelude::Component>(
+    commands: &mut Commands,
+    tile_query: Query<(&GridCoords, &Parent), Added<T>>,
+    parent_query: &Query<&Parent, Without<Wall>>,
+    level_query: &Query<(Entity, &LevelIid)>,
+    ldtk_projects: &Query<&Handle<LdtkProject>>,
+    ldtk_project_assets: &Res<Assets<LdtkProject>>,
+    bundle_to_add: impl Bundle + Copy
+) {
+    // Consider where the walls are
+    // storing them as GridCoords in a HashSet for quick, easy lookup
+    //
+    // The key of this map will be the entity of the level the wall belongs to.
+    // This has two consequences in the resulting collision entities:
+    // 1. it forces the walls to be split along level boundaries
+    // 2. it lets us easily add the collision entities as children of the appropriate level entity
+    let mut level_to_wall_locations: HashMap<Entity, HashSet<GridCoords>> = HashMap::new();
+
+    tile_query.for_each(|(&grid_coords, parent)| {
+        // An intgrid tile's direct parent will be a layer entity, not the level entity
+        // To get the level entity, you need the tile's grandparent.
+        // This is where parent_query comes in.
+        if let Ok(grandparent) = parent_query.get(parent.get()) {
+            level_to_wall_locations
+                .entry(grandparent.get())
+                .or_default()
+                .insert(grid_coords);
+        }
+    });
+
     /// Represents a wide wall that is 1 tile tall
     /// Used to spawn wall collisions
     #[derive(Clone, Eq, PartialEq, Debug, Default, Hash)]
@@ -76,28 +133,7 @@ pub fn spawn_wall_collision(
         bottom: i32,
     }
 
-    // Consider where the walls are
-    // storing them as GridCoords in a HashSet for quick, easy lookup
-    //
-    // The key of this map will be the entity of the level the wall belongs to.
-    // This has two consequences in the resulting collision entities:
-    // 1. it forces the walls to be split along level boundaries
-    // 2. it lets us easily add the collision entities as children of the appropriate level entity
-    let mut level_to_wall_locations: HashMap<Entity, HashSet<GridCoords>> = HashMap::new();
-
-    wall_query.for_each(|(&grid_coords, parent)| {
-        // An intgrid tile's direct parent will be a layer entity, not the level entity
-        // To get the level entity, you need the tile's grandparent.
-        // This is where parent_query comes in.
-        if let Ok(grandparent) = parent_query.get(parent.get()) {
-            level_to_wall_locations
-                .entry(grandparent.get())
-                .or_default()
-                .insert(grid_coords);
-        }
-    });
-
-    if !wall_query.is_empty() {
+    if !tile_query.is_empty() {
         level_query.for_each(|(level_entity, level_iid)| {
             if let Some(level_walls) = level_to_wall_locations.get(&level_entity) {
                 let ldtk_project = ldtk_project_assets
@@ -197,7 +233,8 @@ pub fn spawn_wall_collision(
                                     / 2.,
                                 0.,
                             ))
-                            .insert(GlobalTransform::default());
+                            .insert(GlobalTransform::default())
+                            .insert(bundle_to_add);
                     }
                 });
             }

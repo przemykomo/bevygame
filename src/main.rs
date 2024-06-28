@@ -3,6 +3,7 @@ pub mod setup;
 
 use bevy::{log::LogPlugin, prelude::*, render::camera::ScalingMode};
 use bevy_ecs_ldtk::prelude::*;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_rapier2d::prelude::*;
 use player::*;
 use setup::*;
@@ -10,10 +11,10 @@ use setup::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())
-            /*.set(LogPlugin {
-            level: bevy::log::Level::DEBUG,
+            .set(LogPlugin {
+            level: bevy::log::Level::INFO,
             ..default()
-            })*/
+            })
         )
         .add_plugins(LdtkPlugin)
         .insert_resource(LdtkSettings {
@@ -21,10 +22,7 @@ fn main() {
             ..default()
         })
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
-        .insert_resource(RapierConfiguration {
-            gravity: Vec2::new(0.0, -200.0),
-            ..Default::default()
-        })
+        .insert_resource(RapierConfiguration::new(20.4))
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_systems(Startup, setup)
         .add_systems(Update, camera_fit_inside_current_level)
@@ -37,11 +35,16 @@ fn main() {
         .add_systems(Update, spawn_ground_sensor)
         .add_systems(Update, ground_detection)
         .add_systems(Update, update_on_ground)
+        .add_systems(Update, collide_with_spikes)
         .insert_resource(LevelSelection::iid("0f72e230-b0a0-11ee-851b-03ba2455339d"))
         .register_ldtk_entity::<PlayerBundle>("Player")
         .register_ldtk_entity::<GoalBundle>("Goal")
+        .register_ldtk_entity::<SpawnpointBundle>("Spawnpoint")
+        .register_ldtk_entity::<HookBundle>("Hook")
         .register_ldtk_int_cell::<WallBundle>(1)
         .register_ldtk_int_cell::<WallBundle>(2)
+        .register_ldtk_int_cell::<SpikesBundle>(4)
+        .add_plugins(WorldInspectorPlugin::new())
         .run();
 }
 
@@ -93,6 +96,8 @@ fn level_selection_follow_player(
     }
 }
 
+const MAX_SCREEN_WIDTH : f32 = 350.0;
+
 fn camera_fit_inside_current_level(
     mut camera_query: Query<
         (
@@ -135,12 +140,11 @@ fn camera_fit_inside_current_level(
             if level_selection.is_match(&LevelIndices::default(), level) {
                 let level_ratio = level.px_wid as f32 / level.px_hei as f32;
                 orthographic_projection.viewport_origin = Vec2::ZERO;
-                if level.px_wid >= 300 && level.px_hei as f32 >= 300.0 / aspect_ratio {
-                    let width = 300.0;
-                    let height = 300.0 / aspect_ratio;
-                    wanted_scale.x = width;
+                if level.px_wid as f32 >= MAX_SCREEN_WIDTH && level.px_hei as f32 >= MAX_SCREEN_WIDTH / aspect_ratio {
+                    let height = MAX_SCREEN_WIDTH / aspect_ratio;
+                    wanted_scale.x = MAX_SCREEN_WIDTH;
                     wanted_scale.y = height;
-                    wanted_camera_position.x = (player_translation.x - width / 2.0).clamp(level_transform.translation.x, level_transform.translation.x + level.px_wid as f32 - width);
+                    wanted_camera_position.x = (player_translation.x - MAX_SCREEN_WIDTH / 2.0).clamp(level_transform.translation.x, level_transform.translation.x + level.px_wid as f32 - MAX_SCREEN_WIDTH);
                     wanted_camera_position.y = (player_translation.y - height / 2.0).clamp(level_transform.translation.y, level_transform.translation.y + level.px_hei as f32 - height);
                 } else if level_ratio > aspect_ratio {
                     // level is wider than the screen
@@ -219,3 +223,13 @@ struct GoalBundle {
     grid_coords: GridCoords
 }
 
+#[derive(Default, Component)]
+pub struct Hook;
+
+#[derive(Default, Bundle, LdtkEntity)]
+pub struct HookBundle {
+    hook: Hook,
+
+    #[sprite_bundle("hook.png")]
+    sprite_bundle: SpriteBundle,
+}
