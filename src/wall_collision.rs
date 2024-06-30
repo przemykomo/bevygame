@@ -4,45 +4,7 @@ use bevy::{prelude::*, utils::HashSet};
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
-#[derive(Default, Component)]
-pub struct Wall;
-
-#[derive(Default, Bundle, LdtkIntCell)]
-pub struct WallBundle {
-    wall: Wall
-}
-
-#[derive(Default, Component, Copy, Clone)]
-pub struct Spikes;
-
-#[derive(Default, Bundle, LdtkIntCell)]
-pub struct SpikesBundle {
-    spikes: Spikes
-}
-
-#[derive(Default, Component)]
-pub struct CameraTransition {
-    pub is_changing_level: bool,
-    pub begin_position: Vec2,
-    pub begin_time: f32,
-    pub begin_scale: Vec2
-}
-
-#[derive(Default, Bundle)]
-pub struct CustomCameraBundle {
-    camera_2d_bundle: Camera2dBundle,
-    transition: CameraTransition
-}
-
-pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(CustomCameraBundle::default());
-
-    commands.spawn(LdtkWorldBundle {
-        ldtk_handle: asset_server.load("gamemap.ldtk"),
-        ..Default::default()
-    });
-}
-
+use crate::{Spikes, Wall};
 
 /// Spawns heron collisions for the walls of a level
 ///

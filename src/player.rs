@@ -1,8 +1,8 @@
-use bevy::{prelude::*, utils::HashSet, window::PrimaryWindow};
+use bevy::{prelude::*, render::camera::ScalingMode, utils::HashSet, window::PrimaryWindow};
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::{dynamics::RopeJointBuilder, prelude::*};
 
-use crate::{Hook, Spikes};
+use crate::{CameraTransition, Hook, Spikes};
 
 const JUMP_GRACE_PERIOD : f32 = 0.1;
 
@@ -31,8 +31,10 @@ pub struct JumpComponent {
 #[derive(Default, Bundle, LdtkEntity)]
 pub struct PlayerBundle {
     player: Player,
-    #[sprite_bundle("player.png")]
-    sprite_bundle: SpriteBundle,
+    //#[sprite_bundle("player.png")]
+    //sprite_bundle: SpriteBundle,
+    #[sprite_sheet_bundle]
+    sprite_sheet_bundle: SpriteSheetBundle,
     //#[grid_coords]
     //grid_coords: GridCoords,
     #[from_entity_instance]
@@ -43,24 +45,12 @@ pub struct PlayerBundle {
 }
 
 #[derive(Component, Default, Debug)]
-pub struct Spawnpoint {
-    pos: Vec2
-}
+pub struct Spawnpoint;
 
 #[derive(Default, Bundle, LdtkEntity)]
 pub struct SpawnpointBundle {
-    #[from_entity_instance]
     spawnpoint: Spawnpoint,
-    #[sprite_bundle("player.png")]
-    sprite_bundle: SpriteBundle
-}
-
-impl From<&EntityInstance> for Spawnpoint {
-    fn from(value: &EntityInstance) -> Self {
-        Spawnpoint {
-            pos: Vec2::new(value.world_x.unwrap() as f32, value.world_y.unwrap() as f32)
-        }
-    }
+    global_transform: GlobalTransform
 }
 
 #[derive(Component)]
@@ -90,7 +80,7 @@ impl From<&EntityInstance> for ColliderBundle {
     fn from(_value: &EntityInstance) -> Self {
         ColliderBundle {
             //collider: Collider::round_cuboid(3.5, 3.5, 0.05),
-            collider: Collider::cuboid(8.0, 8.0),
+            collider: Collider::cuboid(8.0, 14.0),
             rigid_body: RigidBody::Dynamic,
             friction: Friction {
                 coefficient: 0.0,
@@ -99,6 +89,54 @@ impl From<&EntityInstance> for ColliderBundle {
             rotation_constraints: LockedAxes::ROTATION_LOCKED,
             active_events: ActiveEvents::COLLISION_EVENTS,
             ..default()
+        }
+    }
+}
+
+pub fn level_selection_follow_player(
+    players: Query<&GlobalTransform, With<Player>>,
+    levels: Query<(&LevelIid, &GlobalTransform)>,
+    ldtk_projects: Query<&Handle<LdtkProject>>,
+    ldtk_project_assets: Res<Assets<LdtkProject>>,
+    mut level_selection: ResMut<LevelSelection>,
+    mut camera: Query<(&Transform, &mut CameraTransition, &OrthographicProjection)>,
+    time: Res<Time>
+) {
+    if let Ok(player_transform) = players.get_single() {
+        let ldtk_project = ldtk_project_assets
+            .get(ldtk_projects.single())
+            .expect("ldtk project should be loaded before player is spawned");
+
+        for (level_iid, level_transform) in levels.iter() {
+            let level = ldtk_project
+                .get_raw_level_by_iid(level_iid.get())
+                .expect("level should exist in only project");
+
+            let level_bounds = Rect {
+                min: Vec2::new(
+                    level_transform.translation().x,
+                    level_transform.translation().y,
+                ),
+                max: Vec2::new(
+                    level_transform.translation().x + level.px_wid as f32,
+                    level_transform.translation().y + level.px_hei as f32,
+                ),
+            };
+
+            if level_bounds.contains(player_transform.translation().truncate()) {
+                let new_level_selection = LevelSelection::Iid(level_iid.clone());
+                if new_level_selection != *level_selection {
+                    *level_selection = new_level_selection;
+                    let (camera_transform, mut camera_transition, projection) = camera.single_mut();
+                    camera_transition.is_changing_level = true;
+                    camera_transition.begin_position = camera_transform.translation.xy();
+                    camera_transition.begin_time = time.elapsed_seconds();
+                    if let ScalingMode::Fixed { width, height } = projection.scaling_mode {
+                        camera_transition.begin_scale.x = width;
+                        camera_transition.begin_scale.y = height;
+                    }
+                }
+            }
         }
     }
 }
@@ -131,10 +169,10 @@ pub fn collide_with_spikes(
                             for &child in children.iter() {
                                 if let Ok(children) = entity_layer.get(child) {
                                     for &child in children.iter() {
-                                        if let Ok(spawnpoint) = spawnpoint.get(child) {
+                                        if let Ok(transform) = spawnpoint.get(child) {
                                         let mut player_transform = player.single_mut();
-                                            player_transform.translation.x = spawnpoint.translation().x;
-                                            player_transform.translation.y = spawnpoint.translation().y;
+                                            player_transform.translation.x = transform.translation().x;
+                                            player_transform.translation.y = transform.translation().y;
                                             return;
                                         }
                                     }
@@ -226,7 +264,7 @@ pub fn grapple(
                 //if let Some((_, toi)) = rapier_context.cast_ray(player_transform.translation.xy(), ray_dir, 80.0, true, QueryFilter::only_fixed()) {
                     //let hit_point = player_transform.translation.xy() + ray_dir * toi;
 
-                    let joint = RopeJointBuilder::new(80.0)
+                    let joint = RopeJointBuilder::new(hit_point.distance(player_transform.translation.xy()))
                         .local_anchor1(Vec2::new(0.0, 0.0))
                         .local_anchor2(Vec2::new(0.0, 0.0)).build();
 
