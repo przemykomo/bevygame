@@ -43,6 +43,7 @@ fn main() {
         .register_ldtk_entity::<PlayerBundle>("Player")
         .register_ldtk_entity::<SpawnpointBundle>("Spawnpoint")
         .register_ldtk_entity::<HookBundle>("Hook")
+        .register_ldtk_entity::<PushPlatformBundle>("PushPlatform")
         .register_ldtk_int_cell::<WallBundle>(1)
         .register_ldtk_int_cell::<WallBundle>(2)
         .register_ldtk_int_cell::<SpikesBundle>(4)
@@ -79,4 +80,11 @@ pub struct PushPlatformBundle {
 
     #[sprite_bundle("push_platform.png")]
     sprite_bundle: SpriteBundle,
+
+    #[with(push_platform_collider_init)]
+    collider: Collider
+}
+
+fn push_platform_collider_init(_value: &EntityInstance) -> Collider {
+        Collider::cuboid(8.0, 8.0)
 }

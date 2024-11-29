@@ -2,7 +2,7 @@ use bevy::{prelude::*, render::camera::ScalingMode, utils::HashSet, window::Prim
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::{dynamics::RopeJointBuilder, prelude::*};
 
-use crate::{CameraTransition, Hook, Spikes};
+use crate::{CameraTransition, Hook, PushPlatform, Spikes};
 
 const JUMP_GRACE_PERIOD : f32 = 0.1;
 
@@ -173,6 +173,7 @@ pub fn collide_with_spikes(
                                         let mut player_transform = player.single_mut();
                                             player_transform.translation.x = transform.translation().x;
                                             player_transform.translation.y = transform.translation().y;
+                                            panic!();
                                             return;
                                         }
                                     }
@@ -367,12 +368,16 @@ pub fn ground_detection(
     mut ground_sensors: Query<&mut GroundSensor>,
     mut collisions: EventReader<CollisionEvent>,
     collidables: Query<(), (With<Collider>, Without<Sensor>)>,
+    push_platform: Query<(), With<PushPlatform>>,
+    mut player_velocity: Query<&mut Velocity, With<Player>>
 ) {
     for collision_event in collisions.read() {
         match collision_event {
             CollisionEvent::Started(e1, e2, _) => {
                 if collidables.contains(*e1) {
-                    if let Ok(mut sensor) = ground_sensors.get_mut(*e2) {
+                    if push_platform.contains(*e1) {
+                        player_velocity.single_mut().linvel.y = 300.0;
+                    } else if let Ok(mut sensor) = ground_sensors.get_mut(*e2) {
                         sensor.intersecting_ground_entities.insert(*e1);
                     }
                 } else if collidables.contains(*e2) {
